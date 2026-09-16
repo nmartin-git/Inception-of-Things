@@ -2,7 +2,7 @@
 # vi: set ft=ruby :
 
 LOGIN = "nmartin"
-OS_BOX = "debian/trixie64" 
+OS_BOX = "debian/bookworm64" 
 
 Vagrant.configure("2") do |config|
   config.vm.box_check_update = false
