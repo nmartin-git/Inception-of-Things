@@ -6,7 +6,7 @@ Vagrant.configure("2") do |config|
   config.vm.define "maissatS" do |server|
 
     # Box Ubuntu
-    server.vm.box = "ubuntu/bionic64"
+    server.vm.box = "bento/ubuntu-24.04"
 
     # Hostname
     server.vm.hostname = "maissatS"
@@ -29,7 +29,7 @@ Vagrant.configure("2") do |config|
   config.vm.define "maissatSW" do |worker|
 
     # Box Ubuntu
-    worker.vm.box = "ubuntu/bionic64"
+    worker.vm.box = "bento/ubuntu-24.04"
 
     # Hostname
     worker.vm.hostname = "maissatSW"
