@@ -1,0 +1,39 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+
+LOGIN = "nmartin"
+OS_BOX = "debian/bookworm64" 
+
+Vagrant.configure("2") do |config|
+  config.vm.box_check_update = false
+
+# Server node
+
+  config.vm.define "#{LOGIN}S" do |server|
+    server.vm.box = OS_BOX
+    server.vm.hostname = "#{LOGIN}S"
+    
+    server.vm.network "private_network", ip: "192.168.56.110"
+
+    server.vm.provider "virtualbox" do |vb|
+      vb.name = "#{LOGIN}S"
+      vb.memory = "1024"
+      vb.cpus = 1
+    end
+  end
+
+# Server Worker node
+
+  config.vm.define "#{LOGIN}SW" do |worker|
+    worker.vm.box = OS_BOX
+    worker.vm.hostname = "#{LOGIN}SW"
+    
+    worker.vm.network "private_network", ip: "192.168.56.111"
+
+    worker.vm.provider "virtualbox" do |vb|
+      vb.name = "#{LOGIN}SW"
+      vb.memory = "1024"
+      vb.cpus = 1
+    end
+  end
+end
