@@ -20,11 +20,20 @@ if [ "${EUID}" -ne 0 ]; then
     error "Lance ce script avec sudo ou en root."
 fi
 
+if [ "$#" -gt 1 ] || { [ "$#" -eq 1 ] && [ "$1" != "--reset" ]; }; then
+    error "Usage : $0 [--reset]"
+fi
+
+RESET_CLUSTER=false
+if [ "${1:-}" = "--reset" ]; then
+    RESET_CLUSTER=true
+fi
+
 export DEBIAN_FRONTEND=noninteractive
 
 log "Installation des dépendances de base..."
 apt-get update
-apt-get install -y ca-certificates curl gnupg apt-transport-https
+apt-get install -y ca-certificates curl
 
 if command -v docker >/dev/null 2>&1; then
     log "Docker est déjà installé."
@@ -63,24 +72,37 @@ else
     curl -fsSL https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
 fi
 
-if command -v kubectl >/dev/null 2>&1; then
-    log "kubectl est déjà installé."
+if [ "${RESET_CLUSTER}" = true ] && \
+    k3d cluster list | awk 'NR > 1 {print $1}' | grep -qx "${CLUSTER_NAME}"; then
+    log "Suppression du cluster ${CLUSTER_NAME} pour une installation propre..."
+    k3d cluster delete "${CLUSTER_NAME}"
+    if k3d cluster list | awk 'NR > 1 {print $1}' | grep -qx "${CLUSTER_NAME}"; then
+        error "Le cluster ${CLUSTER_NAME} existe encore après la suppression."
+    fi
+fi
+
+if command -v kubectl >/dev/null 2>&1 && \
+    [[ "$(kubectl version --client --output=yaml 2>/dev/null | awk '$1 == "gitVersion:" {print $2; exit}')" == v1.36.* ]]; then
+    log "kubectl v1.36 est déjà installé."
 else
-    log "Installation de kubectl..."
+    log "Installation de kubectl v1.36..."
+    arch="$(dpkg --print-architecture)"
+    case "${arch}" in
+        amd64|arm64) ;;
+        *) error "Architecture non prise en charge pour kubectl : ${arch}" ;;
+    esac
 
-    install -m 0755 -d /etc/apt/keyrings
+    release="$(curl -fsSL https://dl.k8s.io/release/stable-1.36.txt)"
+    [[ "${release}" =~ ^v1\.36\.[0-9]+$ ]] || error "Version kubectl inattendue : ${release}"
 
-    curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.29/deb/Release.key \
-        | gpg --dearmor \
-        -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
-
-    chmod a+r /etc/apt/keyrings/kubernetes-apt-keyring.gpg
-
-    echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.29/deb/ /" \
-        > /etc/apt/sources.list.d/kubernetes.list
-
-    apt-get update
-    apt-get install -y kubectl
+    kubectl_binary="$(mktemp)"
+    kubectl_url="https://dl.k8s.io/release/${release}/bin/linux/${arch}/kubectl"
+    curl -fsSL "${kubectl_url}" -o "${kubectl_binary}"
+    kubectl_sha="$(curl -fsSL "${kubectl_url}.sha256")"
+    printf '%s  %s\n' "${kubectl_sha}" "${kubectl_binary}" | sha256sum --check --status \
+        || error "La vérification de kubectl a échoué."
+    install -m 0755 "${kubectl_binary}" /usr/local/bin/kubectl
+    rm -f "${kubectl_binary}"
 fi
 
 if k3d cluster list 2>/dev/null | awk 'NR > 1 {print $1}' | grep -qx "${CLUSTER_NAME}"; then
@@ -88,6 +110,15 @@ if k3d cluster list 2>/dev/null | awk 'NR > 1 {print $1}' | grep -qx "${CLUSTER_
 else
     log "Création du cluster ${CLUSTER_NAME}..."
     k3d cluster create "${CLUSTER_NAME}" -p "8888:80@loadbalancer"
+fi
+
+log "Sélection du contexte Kubernetes de ${CLUSTER_NAME}..."
+k3d kubeconfig merge "${CLUSTER_NAME}" \
+    --kubeconfig-merge-default \
+    --kubeconfig-switch-context
+
+if [ "$(kubectl config current-context)" != "k3d-${CLUSTER_NAME}" ]; then
+    error "Le contexte Kubernetes actif n'est pas k3d-${CLUSTER_NAME}."
 fi
 
 kubectl get namespace "${ARGOCD_NAMESPACE}" >/dev/null 2>&1 || {
@@ -108,6 +139,11 @@ kubectl apply \
     -f "${ARGOCD_MANIFEST}"
 
 log "Attente du démarrage des pods Argo CD..."
+kubectl rollout status \
+    deployment/argocd-server \
+    -n "${ARGOCD_NAMESPACE}" \
+    --timeout=300s
+
 kubectl wait \
     --for=condition=Ready \
     pod \
@@ -142,4 +178,5 @@ kubectl -n "${ARGOCD_NAMESPACE}" get secret argocd-initial-admin-secret \
 echo
 echo "Pour ouvrir l'interface Argo CD :"
 echo "kubectl port-forward svc/argocd-server -n argocd 8080:443"
+echo "Si le script a été lancé avec sudo, lance également kubectl avec sudo."
 echo "Puis ouvrir https://localhost:8080"
